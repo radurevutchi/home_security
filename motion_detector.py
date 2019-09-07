@@ -3,7 +3,7 @@
 
 
 # import the necessary packages
-
+from threading import Thread
 from imutils.video import VideoStream
 import datetime
 import time
@@ -36,6 +36,8 @@ def send_email(filename):
 	)
 
 
+def beep(filename):
+	os.system(filename)
 
 # FUNCTION TO HANDLE CTRL C EXIT
 def signal_handler(sig, frame):
@@ -70,18 +72,21 @@ vs = VideoStream(src=0, resolution=(1920,1080)).start()
 time.sleep(2.0)
 
 
-
-server_freq = 60 # How often to upload capture to server
-email_freq = 60 * 20 # How often to send email
+# units in seconds
+local_save_freq = 1
+background_freq = 60 # How often to refresh background
+server_freq = 5 # How often to upload capture to server
+email_freq = 60 * 5 # How often to send email
+clear_local_freq = 30 # How often to clear up local images
 
 
 # initialize the first frame in the video stream
 firstFrame = None
-start_time = time.time()
-second_time = time.time()
-server_timer = time.time()# - server_freq # Counter for uploading motion capture to server
+local_save_timer = time.time()
+background_time = time.time()
+server_timer = time.time() - server_freq # Counter for uploading motion capture to server
 email_timer = time.time() - email_freq # Counter for sending email attachment
-
+clear_local_timer = time.time()
 
 
 
@@ -113,12 +118,11 @@ while True:
 
 
 
-	# resets background every <refresh_rate> seconds
+	# resets background every <background_freq> seconds
 	# this deals with vibrations, changes in lighting, and false motion
-	refresh_rate = 20
-	if time.time() - start_time > refresh_rate:
+	if time.time() - background_time > background_freq:
 		firstFrame = None
-		start_time = time.time()
+		background_time = time.time()
 
 
 
@@ -141,6 +145,7 @@ while True:
 		cv2.CHAIN_APPROX_SIMPLE)
 	cnts = imutils.grab_contours(cnts)
 
+
 	# loop over the contours
 	for c in cnts:
 		# if the contour is too small, ignore it
@@ -155,21 +160,29 @@ while True:
 		occupied = True
 
 
-
+	# clears local deposit of image captures every 30 seconds
+	if time.time() - clear_local_timer > clear_local_freq:
+		os.system("rm captures/*")
+		clear_local_timer = time.time()
 
 	img_filename = '{0:%B_%d_%Y_%H_%M_%S}'.format(d.now(timezone(my_timezone))) + '.jpg'
-	'''
+
 	# writes to local machine
-	#cv2.imwrite(img_filename, frame)
-	'''
+	if time.time() - local_save_timer > 0.9:
+		cv2.imwrite("captures/"+img_filename, frame)
+		local_save_timer = time.time()
+
 
 	# writes to external server
-	if occupied and server_timer - time.time() > server_freq:
+
+	if occupied and time.time() - server_timer > server_freq:
 		scp_to_server = "scp -i "
 		scp_to_server += "deep_learning_instance_1.pem "
-		scp_to_server += img_filename + " "
-		scp_to_server += "ubuntu@ec2-3-87-147-95.compute-1.amazonaws.com:/home/ubuntu"
-		os.system(scp_to_server)
+		scp_to_server += "captures/" + img_filename + " "
+		scp_to_server += "ubuntu@ec2-34-236-155-231.compute-1.amazonaws.com:/home/ubuntu/motion"
+		copying = Thread(target=beep, args=[scp_to_server])
+		copying.start()
+		#os.system(scp_to_server)
 		server_timer = time.time()
 
 
@@ -183,7 +196,7 @@ while True:
 
 
 
-
+	print(img_filename)
 	# draw the text and timestamp on the frame
 	cv2.putText(frame, "Room Status: {}".format(text), (10, 20),
 		cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -192,11 +205,11 @@ while True:
 
 
 	# show the frame and record if the user presses a key
-	cv2.imshow("Security Feed", frame)
+	#cv2.imshow("Security Feed", frame)
 
 
-	cv2.imshow("Thresh", thresh)
-	cv2.imshow("Frame Delta", frameDelta)
+	#cv2.imshow("Thresh", thresh)
+	#cv2.imshow("Frame Delta", frameDelta)
 	key = cv2.waitKey(1) & 0xFF
 
 	# if the `q` key is pressed, break from the lop
